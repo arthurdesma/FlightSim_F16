@@ -1,3 +1,4 @@
+// Filename: Plane.cs
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -10,6 +11,8 @@ public class Plane : MonoBehaviour {
     public const float kilosToPounds = 2.20462f;
     public const float slugToKilo = 14.5939f;
     public const float footSquareToMeterSquare = 0.092903f;
+
+
 
     [SerializeField]
     float maxHealth;
@@ -259,6 +262,24 @@ public class Plane : MonoBehaviour {
     public void SetControlInput(Vector3 input) {
         if (Dead) return;
         controlInput = Vector3.ClampMagnitude(input, 1);
+    }
+
+    /// <summary>
+    /// This method is called by the PlaneAgent at the start of each episode
+    /// to ensure the plane starts from a neutral state.
+    /// </summary>
+    public void ResetPlane()
+    {
+        // Reset the control surfaces (pitch, yaw, roll) to neutral.
+        controlInput = Vector3.zero;
+        SetControlInput(Vector3.zero);
+
+        // Reset the throttle to zero.
+        throttleInput = 0f;
+        SetThrottleInput(0f);
+        
+        // Also reset the internal throttle state variable
+        Throttle = 0f; 
     }
 
     public void ApplyDamage(float damage) {
