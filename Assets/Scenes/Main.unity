@@ -925,7 +925,7 @@ Transform:
   m_GameObject: {fileID: 1453037247}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 9154, y: 832, z: 8341}
+  m_LocalPosition: {x: 9154, y: 831.989, z: 8341}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1198,6 +1198,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9a6df4f1ce0b54adeb7c1326c786ff56, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  agentParameters:
+    maxStep: 0
+  hasUpgradedFromAgentParameters: 1
+  MaxStep: 0
+  plane: {fileID: 1752638251}
+  planeRigidbody: {fileID: 0}
+  target: {fileID: 1453037251}
+  targetSpawnRadius: 500
+  minSpawnHeight: 832
 --- !u!114 &1752638258
 MonoBehaviour:
   m_ObjectHideFlags: 0

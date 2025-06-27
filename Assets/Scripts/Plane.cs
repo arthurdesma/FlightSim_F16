@@ -572,25 +572,25 @@ public class Plane : MonoBehaviour {
         CalculateState(dt);
     }
 
-    void OnCollisionEnter(Collision collision) {
-        for (int i = 0; i < collision.contactCount; i++) {
-            var contact = collision.contacts[i];
+    // void OnCollisionEnter(Collision collision) {
+    //     for (int i = 0; i < collision.contactCount; i++) {
+    //         var contact = collision.contacts[i];
 
-            if (landingGear.Contains(contact.thisCollider)) {
-                return;
-            }
+    //         if (landingGear.Contains(contact.thisCollider)) {
+    //             return;
+    //         }
 
-            Health = 0;
+    //         Health = 0;
 
-            Rigidbody.isKinematic = true;
-            Rigidbody.position = contact.point;
-            Rigidbody.rotation = Quaternion.Euler(0, Rigidbody.rotation.eulerAngles.y, 0);
+    //         Rigidbody.isKinematic = true;
+    //         Rigidbody.position = contact.point;
+    //         Rigidbody.rotation = Quaternion.Euler(0, Rigidbody.rotation.eulerAngles.y, 0);
 
-            foreach (var go in graphics) {
-                go.SetActive(false);
-            }
+    //         foreach (var go in graphics) {
+    //             go.SetActive(false);
+    //         }
 
-            return;
-        }
-    }
+    //         return;
+    //     }
+    // }
 }
