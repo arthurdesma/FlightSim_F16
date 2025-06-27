@@ -8,6 +8,8 @@ public class Spawner : MonoBehaviour {
     [SerializeField]
     PlayerController playerController;
     [SerializeField]
+    PlayerController AIController;
+    [SerializeField]
     Transform spawnGround;
     [SerializeField]
     Transform spawnAir;
@@ -16,6 +18,9 @@ public class Spawner : MonoBehaviour {
     bool spawnInAir;
     [SerializeField]
     float spawnInAirSpeed;
+    
+    [SerializeField]
+    bool useAI;
 
     GameObject activePlane;
 
@@ -45,6 +50,7 @@ public class Spawner : MonoBehaviour {
     void Spawn(Transform spawnPoint) {
         if (activePlane != null) {
             playerController.SetPlane(null);
+            AIController.SetPlane(null);
             Destroy(activePlane);
         }
 
@@ -53,6 +59,11 @@ public class Spawner : MonoBehaviour {
         t.SetPositionAndRotation(spawnPoint.position, spawnPoint.rotation);
 
         Plane plane = activePlane.GetComponent<Plane>();
-        playerController.SetPlane(plane);
+        
+        if (useAI) {
+            AIController.SetPlane(plane);
+        } else {
+            playerController.SetPlane(plane);
+        }
     }
 }
