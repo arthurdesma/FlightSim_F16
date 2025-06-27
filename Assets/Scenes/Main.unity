@@ -703,7 +703,7 @@ MonoBehaviour:
   AIController: {fileID: 1302121666}
   spawnGround: {fileID: 526688563}
   spawnAir: {fileID: 1460096826}
-  spawnInAir: 0
+  spawnInAir: 1
   spawnInAirSpeed: 100
   useAI: 1
 --- !u!4 &811920740
