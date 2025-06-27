@@ -38,7 +38,7 @@ public class AIController : MonoBehaviour {
         }
 
         planeCamera.SetPlane(plane);
-        aiInput.SetPlane(plane);
+        // aiInput.SetPlane(plane);
     }
 
     void Update() {

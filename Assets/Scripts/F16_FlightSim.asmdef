@@ -2,7 +2,9 @@
     "name": "F16_FlightSim",
     "rootNamespace": "",
     "references": [
-        "GUID:75469ad4d38634e559750d17036d5f7c"
+        "GUID:75469ad4d38634e559750d17036d5f7c",
+        "GUID:85e0054f8e64b47309646d35f8851f81",
+        "GUID:917f332e7ad944428f0246683188de8f"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
