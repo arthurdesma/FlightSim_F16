@@ -8,7 +8,7 @@ public class Spawner : MonoBehaviour {
     [SerializeField]
     PlayerController playerController;
     [SerializeField]
-    PlayerController AIController;
+    AIController AIController;
     [SerializeField]
     Transform spawnGround;
     [SerializeField]
@@ -48,22 +48,33 @@ public class Spawner : MonoBehaviour {
     }
 
     void Spawn(Transform spawnPoint) {
+        // Clean up previous plane
         if (activePlane != null) {
-            playerController.SetPlane(null);
-            AIController.SetPlane(null);
+            if (playerController != null) playerController.SetPlane(null);
+            if (AIController != null) AIController.SetPlane(null);
             Destroy(activePlane);
         }
 
+        // Spawn new plane
         activePlane = Instantiate(planePrefab);
         Transform t = activePlane.GetComponent<Transform>();
         t.SetPositionAndRotation(spawnPoint.position, spawnPoint.rotation);
 
         Plane plane = activePlane.GetComponent<Plane>();
         
+        // Set the plane to the appropriate controller with null checks
         if (useAI) {
-            AIController.SetPlane(plane);
+            if (AIController != null) {
+                AIController.SetPlane(plane);
+            } else {
+                Debug.LogError("AI Controller is not assigned in the Spawner!");
+            }
         } else {
-            playerController.SetPlane(plane);
+            if (playerController != null) {
+                playerController.SetPlane(plane);
+            } else {
+                Debug.LogError("Player Controller is not assigned in the Spawner!");
+            }
         }
     }
 }
