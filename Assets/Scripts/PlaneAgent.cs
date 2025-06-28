@@ -6,10 +6,8 @@ using System.Collections.Generic;
 using System.Linq;
 
 /// <summary>
-/// An ML-Agent that learns to fly a plane towards a series of targets within a time limit.
-/// This agent uses a complex reward function to encourage efficient, stable, and safe flight.
-/// It uses a Ray Perception Sensor to see and avoid terrain.
-/// It can optionally be enhanced with a Genetic Algorithm to bootstrap learning.
+/// An ML-Agent that learns to fly a plane towards targets while avoiding crashes.
+/// Simplified and optimized for better crash avoidance learning.
 /// </summary>
 public class PlaneAgent : Agent
 {
@@ -19,102 +17,48 @@ public class PlaneAgent : Agent
     [SerializeField] private Transform target;
 
     [Header("Episode Settings")]
-    [SerializeField] private float targetSpawnRadius = 500f;
-    [SerializeField] private float minSpawnHeight = 50f;
-    [SerializeField] private float targetReachedRadius = 40f; 
-    [SerializeField] private float maxEpisodeSeconds = 300f; // The max "lifetime" of the plane in seconds
+    [SerializeField] private float targetSpawnRadius = 300f;
+    [SerializeField] private float minSpawnHeight = 100f; // Increased for safety
+    [SerializeField] private float targetReachedRadius = 40f;
+    [SerializeField] private float maxEpisodeSeconds = 120f; // Shorter episodes
 
     [Header("Primary Rewards & Penalties")]
-    [SerializeField] private float targetReachedReward = 25.0f;
-    [SerializeField] private float crashPenalty = -15.0f;
-    [SerializeField] private float timeStepPenalty = -0.005f;
-    [SerializeField] private float timeOutPenalty = -5f; // Penalty for running out of time
+    [SerializeField] private float targetReachedReward = 15.0f;
+    [SerializeField] private float crashPenalty = -30.0f; // Increased penalty
+    [SerializeField] private float timeStepPenalty = -0.001f; // Reduced
+    [SerializeField] private float timeOutPenalty = -10f;
 
-    [Header("Guidance & Style Rewards")]
-    [SerializeField] private float alignmentScale = 5.0f;
-    [SerializeField] private float velocityTowardsTargetScale = 0.02f;
-    [SerializeField] private float altitudeScale = 1.0f;
-    [SerializeField] private float optimalSpeedScale = 0.5f;
-    [SerializeField] private float stabilityScale = 0.5f;
-    [SerializeField] private float progressRewardScale = 1.5f; 
+    [Header("Safety Rewards")]
+    [SerializeField] private float progressRewardScale = 1.0f;
+    [SerializeField] private float stabilityScale = 0.2f;
+    [SerializeField] private float altitudeRewardScale = 0.5f;
+    [SerializeField] private float groundProximityPenaltyScale = -15.0f; // Increased
+    [SerializeField] private float terrainProximityPenaltyScale = -20f; // Increased
 
-    [Header("Safety & Control Penalties")]
-    [SerializeField] private float stallPenaltyScale = -2.0f;
-    [SerializeField] private float groundProximityPenaltyScale = -5.0f;
-    [SerializeField] private float excessiveAngularVelocityPenaltyScale = -0.1f;
-    
     [Header("Terrain Avoidance")]
-    [SerializeField] private float terrainProximityPenaltyScale = -10f;
-    [SerializeField] private float terrainCheckDistance = 250f;
-    [SerializeField] private float terrainCheckSphereRadius = 15f;
+    [SerializeField] private float terrainCheckDistance = 100f;
+    [SerializeField] private float terrainCheckSphereRadius = 10f;
 
     [Header("Flight Parameters")]
-    [SerializeField] private float optimalSpeed = 80.0f;
-    [SerializeField] private float speedTolerance = 25.0f;
-    [SerializeField] private float stallAngleThreshold = 17.0f; // In degrees
-    [SerializeField] private float maxAllowedAngularVelocity = 2.0f; // Radians per second
-
-    [Header("Genetic Algorithm Enhancement")]
-    [SerializeField] private bool useGeneticBootstrap = true;
-    [SerializeField] private float mutationRate = 0.1f;
-    [SerializeField] private float explorationDecay = 0.995f;
+    [SerializeField] private float optimalSpeed = 60.0f; // Reduced for stability
+    [SerializeField] private float stallAngleThreshold = 15.0f;
+    [SerializeField] private float maxAllowedAngularVelocity = 1.5f;
 
     private Vector3 initialPosition;
     private Quaternion initialRotation;
     private bool isReady = false;
     
-    // --- State tracking variables ---
-    private float lastDistanceToTarget; // For progress rewards
-    private float episodeTimer; // For airplane lifetime/fuel
-    private bool isEpisodeActive; // Flag to ensure EndEpisode() is called only once
-
-    // Performance tracking
+    // State tracking variables
+    private float lastDistanceToTarget;
+    private float episodeTimer;
+    private bool isEpisodeActive;
     private float totalReward = 0f;
-
-    // Genetic algorithm components
-    private static List<GeneticMemory> populationMemory = new List<GeneticMemory>();
-    private GeneticMemory currentGenes;
-    private float explorationRate = 1.0f;
-
-    [System.Serializable]
-    private class GeneticMemory
-    {
-        public float fitness;
-        public float[] genes;
-        public float avgSpeed;
-        public float avgAltitude;
-
-        public GeneticMemory(int geneCount)
-        {
-            genes = new float[geneCount];
-            for (int i = 0; i < geneCount; i++)
-            {
-                genes[i] = Random.Range(-1f, 1f);
-            }
-        }
-
-        public GeneticMemory Clone()
-        {
-            var clone = new GeneticMemory(genes.Length);
-            System.Array.Copy(genes, clone.genes, genes.Length);
-            clone.fitness = fitness;
-            return clone;
-        }
-    }
 
     // --- INITIALIZATION & EPISODE MANAGEMENT ---
 
     public override void Initialize()
     {
         InitializeAgent();
-        if (useGeneticBootstrap && populationMemory.Count == 0)
-        {
-            for (int i = 0; i < 10; i++)
-            {
-                populationMemory.Add(new GeneticMemory(4));
-            }
-        }
-        currentGenes = new GeneticMemory(4);
     }
 
     private void InitializeAgent()
@@ -129,15 +73,10 @@ public class PlaneAgent : Agent
 
     public override void OnEpisodeBegin()
     {
-        isEpisodeActive = true; // Set the episode as active
-
-        if (useGeneticBootstrap && totalReward != 0)
-        {
-            UpdateGeneticPopulation();
-        }
-
+        isEpisodeActive = true;
         totalReward = 0f;
-        episodeTimer = 0f; // Reset the timer
+        episodeTimer = 0f;
+        
         if (!isReady) InitializeAgent();
 
         // Reset plane physics and position
@@ -151,15 +90,11 @@ public class PlaneAgent : Agent
         if (plane != null)
         {
             plane.ResetPlane();
-            planeRigidbody.velocity = transform.forward * 50f;
+            // Gentler initial velocity for learning
+            planeRigidbody.velocity = transform.forward * 30f;
         }
 
         MoveTargetToRandomPosition();
-
-        if (useGeneticBootstrap)
-        {
-            SelectGenesForEpisode();
-        }
         
         // Initialize the distance tracker
         if(target != null)
@@ -174,53 +109,49 @@ public class PlaneAgent : Agent
     {
         if (!isReady || plane == null || planeRigidbody == null || target == null) return;
 
-        // Total of 14 observations from this script
+        // Velocity and angular velocity in local space
         sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.velocity)); // 3
         sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.angularVelocity)); // 3
 
+        // Direction and distance to target
         Vector3 dirToTarget = (target.position - transform.position).normalized;
         sensor.AddObservation(transform.InverseTransformDirection(dirToTarget)); // 3
         float currentDistance = Vector3.Distance(transform.position, target.position);
-        sensor.AddObservation(currentDistance); // 1
+        sensor.AddObservation(currentDistance / 1000f); // Normalized distance // 1
 
+        // Plane state
         sensor.AddObservation(plane.Throttle); // 1
         sensor.AddObservation(plane.AngleOfAttack); // 1
+        
+        // Stability (how upright the plane is)
         sensor.AddObservation(Vector3.Dot(transform.up, Vector3.up)); // 1
 
-        // Add remaining time as a normalized observation
+        // Ground proximity (critical for crash avoidance)
+        float groundDistance = transform.position.y;
+        sensor.AddObservation(groundDistance / 200f); // Normalized ground distance // 1
+
+        // Remaining time
         float remainingTimeNormalized = Mathf.Max(0, 1f - (episodeTimer / maxEpisodeSeconds));
         sensor.AddObservation(remainingTimeNormalized); // 1
+
+        // Total: 14 observations
     }
 
     public override void OnActionReceived(ActionBuffers actions)
     {
-        if (plane == null) return;
+        if (plane == null || !isEpisodeActive) return;
 
         float pitch = actions.ContinuousActions[0];
         float yaw = actions.ContinuousActions[1];
         float roll = actions.ContinuousActions[2];
         float throttle = actions.ContinuousActions[3];
 
-        if (useGeneticBootstrap && currentGenes != null)
-        {
-            float influence = Mathf.Max(0.2f, explorationRate);
-            pitch = Mathf.Lerp(pitch, currentGenes.genes[0], influence);
-            yaw = Mathf.Lerp(yaw, currentGenes.genes[1], influence);
-            roll = Mathf.Lerp(roll, currentGenes.genes[2], influence);
-            throttle = Mathf.Lerp(throttle, currentGenes.genes[3], influence);
-        }
-
         plane.SetControlInput(new Vector3(pitch, yaw, -roll));
         plane.SetThrottleInput(throttle);
 
-        // We calculate rewards in FixedUpdate to align with physics, but OnActionReceived is fine too.
-        // For simplicity, let's stick to the original design.
         CalculateRewards();
     }
     
-    /// <summary>
-    /// Update the episode timer and check for timeout.
-    /// </summary>
     private void FixedUpdate()
     {
         if (!isEpisodeActive) return;
@@ -229,18 +160,43 @@ public class PlaneAgent : Agent
         if (episodeTimer >= maxEpisodeSeconds)
         {
             AddReward(timeOutPenalty);
-            TerminateEpisode(); // End the episode if we run out of time
+            TerminateEpisode();
         }
     }
 
-
-    // --- REWARD CALCULATION ---
+    // --- SIMPLIFIED REWARD CALCULATION FOCUSED ON CRASH AVOIDANCE ---
 
     private void CalculateRewards()
     {
         if (!isEpisodeActive || target == null || plane == null || plane.Dead) return;
 
-        // --- Progress Reward ---
+        // === CRITICAL: CRASH AVOIDANCE REWARDS ===
+        
+        // 1. Ground proximity penalty (early warning system)
+        float groundHeight = transform.position.y;
+        if (groundHeight < 50f)
+        {
+            float proximityRatio = (50f - groundHeight) / 50f;
+            float penalty = -proximityRatio * proximityRatio * groundProximityPenaltyScale;
+            AddReward(penalty);
+        }
+
+        // 2. Terrain avoidance
+        CalculateTerrainAvoidancePenalty();
+
+        // 3. Stability reward (prevent spinning out of control)
+        float stability = Vector3.Dot(transform.up, Vector3.up);
+        AddReward(stability * stabilityScale);
+
+        // 4. Altitude maintenance reward
+        if (groundHeight > 75f && groundHeight < 300f) // Sweet spot altitude
+        {
+            AddReward(altitudeRewardScale);
+        }
+
+        // === PROGRESS TOWARDS GOAL ===
+        
+        // 5. Progress reward
         float currentDistance = Vector3.Distance(transform.position, target.position);
         float distanceDelta = lastDistanceToTarget - currentDistance;
         if (distanceDelta > 0)
@@ -249,56 +205,39 @@ public class PlaneAgent : Agent
         }
         lastDistanceToTarget = currentDistance;
 
-
-        Vector3 dirToTarget = (target.position - transform.position).normalized;
-
-        // --- 1. GUIDANCE & STYLE ---
-        AddReward(Mathf.Pow((Vector3.Dot(transform.forward, dirToTarget) + 1f) / 2f, 4) * alignmentScale);
-        AddReward(Mathf.Max(0, Vector3.Dot(planeRigidbody.velocity.normalized, dirToTarget)) * velocityTowardsTargetScale);
-        float speedError = Mathf.Abs(plane.LocalVelocity.z - optimalSpeed);
-        float speedReward = (speedError < speedTolerance) ? Mathf.Exp(-0.05f * speedError) : -(speedError / speedTolerance);
-        AddReward(speedReward * optimalSpeedScale);
-        float altitudeDifference = Mathf.Abs(transform.position.y - target.position.y);
-        AddReward(Mathf.Exp(-0.01f * altitudeDifference) * altitudeScale);
-        AddReward(((Vector3.Dot(transform.up, Vector3.up) + 1f) / 2f) * stabilityScale);
-
-        // --- 2. SAFETY & PENALTIES ---
-        if (Mathf.Abs(plane.AngleOfAttack) > stallAngleThreshold * Mathf.Deg2Rad) AddReward((Mathf.Abs(plane.AngleOfAttack) - (stallAngleThreshold * Mathf.Deg2Rad)) * stallPenaltyScale);
-        if (transform.position.y < minSpawnHeight) AddReward(Mathf.Pow((minSpawnHeight - transform.position.y) / minSpawnHeight, 2) * groundProximityPenaltyScale);
-        CalculateTerrainAvoidancePenalty();
-        if (planeRigidbody.angularVelocity.magnitude > maxAllowedAngularVelocity) AddReward((planeRigidbody.angularVelocity.magnitude - maxAllowedAngularVelocity) * excessiveAngularVelocityPenaltyScale);
-
-        // --- 3. PRIMARY OBJECTIVE & EFFICIENCY ---
+        // 6. Small time penalty to encourage efficiency
         AddReward(timeStepPenalty);
-        
-        // --- Success Bubble Check ---
+
+        // === TARGET REACHED ===
         if (currentDistance < targetReachedRadius)
         {
             AddReward(targetReachedReward);
-            if (useGeneticBootstrap && currentGenes != null) currentGenes.fitness += targetReachedReward;
             MoveTargetToRandomPosition();
             lastDistanceToTarget = Vector3.Distance(transform.position, target.position);
         }
         
         totalReward = GetCumulativeReward();
 
-        // --- Episode End Conditions ---
-        if (plane.Dead || transform.position.y < 0)
+        // === EPISODE END CONDITIONS ===
+        if (plane.Dead || transform.position.y < 5f) // Crash conditions
         {
-            SetReward(crashPenalty);
+            AddReward(crashPenalty); // FIXED: Using AddReward instead of SetReward
             TerminateEpisode();
         }
     }
     
     private void CalculateTerrainAvoidancePenalty()
     {
-        if (Physics.SphereCast(transform.position, terrainCheckSphereRadius, planeRigidbody.velocity.normalized, out RaycastHit hit, terrainCheckDistance))
+        Vector3 checkDirection = planeRigidbody.velocity.magnitude > 5f ? 
+            planeRigidbody.velocity.normalized : transform.forward;
+            
+        if (Physics.SphereCast(transform.position, terrainCheckSphereRadius, 
+            checkDirection, out RaycastHit hit, terrainCheckDistance))
         {
-            // Make sure the ray hit is actually terrain
             if (hit.collider.CompareTag("Terrain"))
             {
                 float proximityRatio = 1f - (hit.distance / terrainCheckDistance);
-                float penalty = Mathf.Pow(proximityRatio, 2) * terrainProximityPenaltyScale;
+                float penalty = proximityRatio * proximityRatio * terrainProximityPenaltyScale;
                 AddReward(penalty);
             }
         }
@@ -309,14 +248,11 @@ public class PlaneAgent : Agent
         // Ignore collisions with the target
         if (target != null && collision.gameObject.transform == target) return;
         
-        // Apply penalty based on what was hit
-        if (collision.gameObject.CompareTag("Terrain")) SetReward(crashPenalty);
-        else AddReward(crashPenalty * 0.5f);
-        
+        // Major crash penalty
+        AddReward(crashPenalty); // FIXED: Using AddReward
         TerminateEpisode();
     }
     
-    // --- HELPER METHOD TO SAFELY END EPISODE ---
     private void TerminateEpisode()
     {
         if (isEpisodeActive)
@@ -329,45 +265,44 @@ public class PlaneAgent : Agent
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var continuousActionsOut = actionsOut.ContinuousActions;
-        // Pitch
+        
+        // Pitch (W/S)
         continuousActionsOut[0] = Input.GetKey(KeyCode.S) ? 1f : (Input.GetKey(KeyCode.W) ? -1f : 0f);
-        // Yaw
+        // Yaw (Q/E)
         continuousActionsOut[1] = Input.GetKey(KeyCode.E) ? 1f : (Input.GetKey(KeyCode.Q) ? -1f : 0f);
-        // Roll
+        // Roll (A/D)
         continuousActionsOut[2] = Input.GetKey(KeyCode.D) ? 1f : (Input.GetKey(KeyCode.A) ? -1f : 0f);
-        // Throttle
+        // Throttle (Shift/Ctrl)
         continuousActionsOut[3] = Input.GetKey(KeyCode.LeftShift) ? 1f : (Input.GetKey(KeyCode.LeftControl) ? -1f : 0f);
     }
 
-    // --- CORRECTED METHOD TO PREVENT FREEZING ---
     private void MoveTargetToRandomPosition()
     {
         if (target == null) return;
 
-        // --- FIX START: Add a sanity check to prevent an infinite loop ---
-        // This validates that the spawn radius is larger than the target radius.
-        // If it's not, it's impossible to find a valid point, which causes the old code to freeze.
+        // Safety check to prevent infinite loop
         if (targetSpawnRadius <= targetReachedRadius)
         {
-            Debug.LogError("`targetSpawnRadius` must be greater than `targetReachedRadius` to prevent an infinite loop. Check your agent's Inspector settings.");
-            // Place target at a default safe position to avoid freezing the editor.
+            Debug.LogError("targetSpawnRadius must be greater than targetReachedRadius");
             target.position = transform.position + (Vector3.up * 100f) + (transform.forward * 100f);
             return;
         }
-        // --- FIX END ---
 
         Vector3 randomPosition;
-        int maxAttempts = 100; // --- FIX: Add a maximum attempt counter ---
+        int maxAttempts = 50;
 
         for (int i = 0; i < maxAttempts; i++)
         {
-            // Get a random point within a sphere around the agent's CURRENT position.
+            // Get a random point within a sphere around the agent's current position
             randomPosition = transform.position + (Random.insideUnitSphere * targetSpawnRadius);
             
-            // Ensure the target is not below the minimum spawn height.
+            // Ensure the target is at a safe height
             randomPosition.y = Mathf.Max(randomPosition.y, minSpawnHeight);
+            
+            // Make sure it's not too close to terrain
+            randomPosition.y = Mathf.Min(randomPosition.y, 400f);
 
-            // If the randomly chosen point is a safe distance away, we found our spot.
+            // Check if the position is valid (far enough from current position)
             if (Vector3.Distance(transform.position, randomPosition) > targetReachedRadius)
             {
                 target.position = randomPosition;
@@ -375,48 +310,11 @@ public class PlaneAgent : Agent
             }
         }
         
-        // --- FIX: If the loop finishes without finding a point (highly unlikely with correct settings) ---
-        Debug.LogWarning("Could not find a valid random position for the target after " + maxAttempts + " attempts. Placing it at a default location.");
-        target.position = transform.position + (transform.forward * (targetSpawnRadius * 0.5f)) + (Vector3.up * minSpawnHeight);
-    }
-
-    private void SelectGenesForEpisode()
-    {
-        if (Random.value < explorationRate || populationMemory.All(g => g.fitness == 0))
-        {
-            currentGenes = new GeneticMemory(4);
-        }
-        else
-        {
-            var bestGenes = populationMemory.OrderByDescending(g => g.fitness).First();
-            currentGenes = bestGenes.Clone();
-            for (int i = 0; i < currentGenes.genes.Length; i++)
-            {
-                if (Random.value < mutationRate)
-                {
-                    currentGenes.genes[i] = Mathf.Clamp(currentGenes.genes[i] + Random.Range(-0.3f, 0.3f), -1f, 1f);
-                }
-            }
-        }
-        explorationRate = Mathf.Max(0.1f, explorationDecay * explorationRate);
-    }
-
-    private void UpdateGeneticPopulation()
-    {
-        currentGenes.fitness = GetCumulativeReward();
-        currentGenes.avgSpeed = plane.LocalVelocity.magnitude;
-        currentGenes.avgAltitude = transform.position.y;
-
-        var worstPerformer = populationMemory.OrderBy(g => g.fitness).First();
-
-        if (currentGenes.fitness > worstPerformer.fitness)
-        {
-            int index = populationMemory.IndexOf(worstPerformer);
-            populationMemory[index] = currentGenes.Clone();
-        }
+        // Fallback position
+        Debug.LogWarning("Could not find valid target position, using fallback");
+        target.position = transform.position + (transform.forward * (targetSpawnRadius * 0.7f)) + (Vector3.up * minSpawnHeight);
     }
 }
-
 
 // mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --force
 
