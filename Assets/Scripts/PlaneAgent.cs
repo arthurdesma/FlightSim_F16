@@ -7,7 +7,7 @@ using System.Linq;
 
 /// <summary>
 /// An ML-Agent that learns to fly a plane towards targets while avoiding crashes.
-/// Simplified and optimized for better crash avoidance learning.
+/// This version is integrated with the SphericalTagDetector for 360-degree obstacle awareness.
 /// </summary>
 public class PlaneAgent : Agent
 {
@@ -15,6 +15,8 @@ public class PlaneAgent : Agent
     [SerializeField] private Plane plane;
     [SerializeField] private Rigidbody planeRigidbody;
     [SerializeField] private Transform target;
+    [Tooltip("Drag the SphericalTagDetector component here.")]
+    [SerializeField] private SphericalTagDetector sphericalDetector; // Reference to your detector script
 
     [Header("Episode Settings")]
     [SerializeField] private float targetSpawnRadius = 300f;
@@ -34,21 +36,17 @@ public class PlaneAgent : Agent
     [SerializeField] private float altitudeRewardScale = 0.5f;
     [SerializeField] private float groundProximityPenaltyScale = -15.0f; // Increased
     [SerializeField] private float terrainProximityPenaltyScale = -20f; // Increased
+    [Tooltip("Penalty applied when the spherical detector 'sees' the terrain.")]
+    [SerializeField] private float sphericalRayPenalty = -5.0f; // Penalty for when the sphere detector hits something
 
-    [Header("Terrain Avoidance")]
+    [Header("Terrain Avoidance (Forward Check)")]
     [SerializeField] private float terrainCheckDistance = 100f;
     [SerializeField] private float terrainCheckSphereRadius = 10f;
 
-    [Header("Flight Parameters")]
-    [SerializeField] private float optimalSpeed = 60.0f; // Reduced for stability
-    [SerializeField] private float stallAngleThreshold = 15.0f;
-    [SerializeField] private float maxAllowedAngularVelocity = 1.5f;
-
+    // State tracking variables
     private Vector3 initialPosition;
     private Quaternion initialRotation;
     private bool isReady = false;
-    
-    // State tracking variables
     private float lastDistanceToTarget;
     private float episodeTimer;
     private bool isEpisodeActive;
@@ -68,6 +66,14 @@ public class PlaneAgent : Agent
         initialRotation = transform.rotation;
         if (plane == null) plane = GetComponent<Plane>();
         if (planeRigidbody == null) planeRigidbody = GetComponent<Rigidbody>();
+        
+        // Get the detector script automatically if it hasn't been assigned in the Inspector
+        if (sphericalDetector == null)
+        {
+            Debug.LogWarning("SphericalTagDetector not assigned in Inspector, attempting to find it on the GameObject.");
+            sphericalDetector = GetComponent<SphericalTagDetector>();
+        }
+        
         isReady = true;
     }
 
@@ -90,8 +96,7 @@ public class PlaneAgent : Agent
         if (plane != null)
         {
             plane.ResetPlane();
-            // Gentler initial velocity for learning
-            planeRigidbody.velocity = transform.forward * 30f;
+            planeRigidbody.velocity = transform.forward * 30f; // Gentler initial velocity for learning
         }
 
         MoveTargetToRandomPosition();
@@ -107,7 +112,7 @@ public class PlaneAgent : Agent
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        if (!isReady || plane == null || planeRigidbody == null || target == null) return;
+        if (!isReady || plane == null || planeRigidbody == null || target == null || sphericalDetector == null) return;
 
         // Velocity and angular velocity in local space
         sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.velocity)); // 3
@@ -134,7 +139,11 @@ public class PlaneAgent : Agent
         float remainingTimeNormalized = Mathf.Max(0, 1f - (episodeTimer / maxEpisodeSeconds));
         sensor.AddObservation(remainingTimeNormalized); // 1
 
-        // Total: 14 observations
+        // Information from our spherical detector
+        // Adds a 1 if the rays detect the ground, 0 otherwise. This is a crucial piece of info for the agent.
+        sensor.AddObservation(sphericalDetector.IsObstacleDetected ? 1.0f : 0.0f); // 1
+
+        // Total: 15 observations
     }
 
     public override void OnActionReceived(ActionBuffers actions)
@@ -164,15 +173,21 @@ public class PlaneAgent : Agent
         }
     }
 
-    // --- SIMPLIFIED REWARD CALCULATION FOCUSED ON CRASH AVOIDANCE ---
+    // --- REWARD CALCULATION ---
 
     private void CalculateRewards()
     {
-        if (!isEpisodeActive || target == null || plane == null || plane.Dead) return;
+        if (!isEpisodeActive || target == null || plane == null || plane.Dead || sphericalDetector == null) return;
 
         // === CRITICAL: CRASH AVOIDANCE REWARDS ===
         
-        // 1. Ground proximity penalty (early warning system)
+        // 1. Penalty from the spherical detector
+        if (sphericalDetector.IsObstacleDetected)
+        {
+            AddReward(sphericalRayPenalty);
+        }
+
+        // 2. Ground proximity penalty (early warning system)
         float groundHeight = transform.position.y;
         if (groundHeight < 50f)
         {
@@ -181,14 +196,14 @@ public class PlaneAgent : Agent
             AddReward(penalty);
         }
 
-        // 2. Terrain avoidance
+        // 3. Forward terrain avoidance
         CalculateTerrainAvoidancePenalty();
 
-        // 3. Stability reward (prevent spinning out of control)
+        // 4. Stability reward (prevent spinning out of control)
         float stability = Vector3.Dot(transform.up, Vector3.up);
         AddReward(stability * stabilityScale);
 
-        // 4. Altitude maintenance reward
+        // 5. Altitude maintenance reward
         if (groundHeight > 75f && groundHeight < 300f) // Sweet spot altitude
         {
             AddReward(altitudeRewardScale);
@@ -196,7 +211,7 @@ public class PlaneAgent : Agent
 
         // === PROGRESS TOWARDS GOAL ===
         
-        // 5. Progress reward
+        // 6. Progress reward
         float currentDistance = Vector3.Distance(transform.position, target.position);
         float distanceDelta = lastDistanceToTarget - currentDistance;
         if (distanceDelta > 0)
@@ -205,7 +220,7 @@ public class PlaneAgent : Agent
         }
         lastDistanceToTarget = currentDistance;
 
-        // 6. Small time penalty to encourage efficiency
+        // 7. Small time penalty to encourage efficiency
         AddReward(timeStepPenalty);
 
         // === TARGET REACHED ===
@@ -221,7 +236,7 @@ public class PlaneAgent : Agent
         // === EPISODE END CONDITIONS ===
         if (plane.Dead || transform.position.y < 5f) // Crash conditions
         {
-            AddReward(crashPenalty); // FIXED: Using AddReward instead of SetReward
+            AddReward(crashPenalty);
             TerminateEpisode();
         }
     }
@@ -245,11 +260,9 @@ public class PlaneAgent : Agent
     
     private void OnCollisionEnter(Collision collision)
     {
-        // Ignore collisions with the target
         if (target != null && collision.gameObject.transform == target) return;
         
-        // Major crash penalty
-        AddReward(crashPenalty); // FIXED: Using AddReward
+        AddReward(crashPenalty);
         TerminateEpisode();
     }
     
@@ -266,13 +279,9 @@ public class PlaneAgent : Agent
     {
         var continuousActionsOut = actionsOut.ContinuousActions;
         
-        // Pitch (W/S)
         continuousActionsOut[0] = Input.GetKey(KeyCode.S) ? 1f : (Input.GetKey(KeyCode.W) ? -1f : 0f);
-        // Yaw (Q/E)
         continuousActionsOut[1] = Input.GetKey(KeyCode.E) ? 1f : (Input.GetKey(KeyCode.Q) ? -1f : 0f);
-        // Roll (A/D)
         continuousActionsOut[2] = Input.GetKey(KeyCode.D) ? 1f : (Input.GetKey(KeyCode.A) ? -1f : 0f);
-        // Throttle (Shift/Ctrl)
         continuousActionsOut[3] = Input.GetKey(KeyCode.LeftShift) ? 1f : (Input.GetKey(KeyCode.LeftControl) ? -1f : 0f);
     }
 
@@ -280,7 +289,6 @@ public class PlaneAgent : Agent
     {
         if (target == null) return;
 
-        // Safety check to prevent infinite loop
         if (targetSpawnRadius <= targetReachedRadius)
         {
             Debug.LogError("targetSpawnRadius must be greater than targetReachedRadius");
@@ -293,16 +301,10 @@ public class PlaneAgent : Agent
 
         for (int i = 0; i < maxAttempts; i++)
         {
-            // Get a random point within a sphere around the agent's current position
             randomPosition = transform.position + (Random.insideUnitSphere * targetSpawnRadius);
-            
-            // Ensure the target is at a safe height
             randomPosition.y = Mathf.Max(randomPosition.y, minSpawnHeight);
-            
-            // Make sure it's not too close to terrain
             randomPosition.y = Mathf.Min(randomPosition.y, 400f);
 
-            // Check if the position is valid (far enough from current position)
             if (Vector3.Distance(transform.position, randomPosition) > targetReachedRadius)
             {
                 target.position = randomPosition;
@@ -310,7 +312,6 @@ public class PlaneAgent : Agent
             }
         }
         
-        // Fallback position
         Debug.LogWarning("Could not find valid target position, using fallback");
         target.position = transform.position + (transform.forward * (targetSpawnRadius * 0.7f)) + (Vector3.up * minSpawnHeight);
     }
