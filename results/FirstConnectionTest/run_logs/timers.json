@@ -2,7 +2,7 @@
     "name": "root",
     "metadata": {
         "timer_format_version": "0.1.0",
-        "start_time_seconds": "1751067081",
+        "start_time_seconds": "1751068753",
         "python_version": "3.10.0 (v3.10.0:b494f5935c, Oct  4 2021, 14:59:19) [Clang 12.0.5 (clang-1205.0.22.11)]",
         "command_line_arguments": "/Library/Frameworks/Python.framework/Versions/3.10/bin/mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --force",
         "mlagents_version": "0.30.0",
@@ -10,36 +10,31 @@
         "communication_protocol_version": "1.5.0",
         "pytorch_version": "1.11.0",
         "numpy_version": "1.21.2",
-        "end_time_seconds": "1751067117"
+        "end_time_seconds": "1751068817"
     },
-    "total": 35.56826041699969,
+    "total": 64.31187825000234,
     "count": 1,
-    "self": 0.011616416995821055,
+    "self": 0.009341165998193901,
     "children": {
         "run_training.setup": {
-            "total": 0.014104917005170137,
+            "total": 0.008187874998839106,
             "count": 1,
-            "self": 0.014104917005170137
+            "self": 0.008187874998839106
         },
         "TrainerController.start_learning": {
-            "total": 35.5425390829987,
+            "total": 64.2943492090053,
             "count": 1,
-            "self": 0.0003400409987079911,
+            "self": 9.683400276117027e-05,
             "children": {
                 "TrainerController._reset_env": {
-                    "total": 35.54214412500005,
+                    "total": 64.29420379099611,
                     "count": 1,
-                    "self": 35.54214412500005
-                },
-                "trainer_threads": {
-                    "total": 1.624997821636498e-06,
-                    "count": 1,
-                    "self": 1.624997821636498e-06
+                    "self": 64.29420379099611
                 },
                 "TrainerController._save_models": {
-                    "total": 5.329200212145224e-05,
+                    "total": 4.8584006435703486e-05,
                     "count": 1,
-                    "self": 5.329200212145224e-05
+                    "self": 4.8584006435703486e-05
                 }
             }
         }
