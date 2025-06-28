@@ -1,4 +1,35 @@
 {
+    "Flyer": {
+        "checkpoints": [
+            {
+                "steps": 51402,
+                "file_path": "results/FirstConnectionTest/Flyer/Flyer-51402.onnx",
+                "reward": null,
+                "creation_time": 1751143957.5821812,
+                "auxillary_file_paths": [
+                    "results/FirstConnectionTest/Flyer/Flyer-51402.pt"
+                ]
+            },
+            {
+                "steps": 256755,
+                "file_path": "results/FirstConnectionTest/Flyer/Flyer-256755.onnx",
+                "reward": 42.67666678958469,
+                "creation_time": 1751144249.149927,
+                "auxillary_file_paths": [
+                    "results/FirstConnectionTest/Flyer/Flyer-256755.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 256755,
+            "file_path": "results/FirstConnectionTest/Flyer.onnx",
+            "reward": 42.67666678958469,
+            "creation_time": 1751144249.149927,
+            "auxillary_file_paths": [
+                "results/FirstConnectionTest/Flyer/Flyer-256755.pt"
+            ]
+        }
+    },
     "metadata": {
         "stats_format_version": "0.3.0",
         "mlagents_version": "0.30.0",

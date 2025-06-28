@@ -213,6 +213,8 @@ public class PlaneAgent : Agent
         plane.SetControlInput(new Vector3(pitch, yaw, -roll));
         plane.SetThrottleInput(throttle);
 
+        // We calculate rewards in FixedUpdate to align with physics, but OnActionReceived is fine too.
+        // For simplicity, let's stick to the original design.
         CalculateRewards();
     }
     
@@ -292,6 +294,7 @@ public class PlaneAgent : Agent
     {
         if (Physics.SphereCast(transform.position, terrainCheckSphereRadius, planeRigidbody.velocity.normalized, out RaycastHit hit, terrainCheckDistance))
         {
+            // Make sure the ray hit is actually terrain
             if (hit.collider.CompareTag("Terrain"))
             {
                 float proximityRatio = 1f - (hit.distance / terrainCheckDistance);
@@ -303,8 +306,10 @@ public class PlaneAgent : Agent
     
     private void OnCollisionEnter(Collision collision)
     {
+        // Ignore collisions with the target
         if (target != null && collision.gameObject.transform == target) return;
         
+        // Apply penalty based on what was hit
         if (collision.gameObject.CompareTag("Terrain")) SetReward(crashPenalty);
         else AddReward(crashPenalty * 0.5f);
         
@@ -324,9 +329,13 @@ public class PlaneAgent : Agent
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var continuousActionsOut = actionsOut.ContinuousActions;
+        // Pitch
         continuousActionsOut[0] = Input.GetKey(KeyCode.S) ? 1f : (Input.GetKey(KeyCode.W) ? -1f : 0f);
+        // Yaw
         continuousActionsOut[1] = Input.GetKey(KeyCode.E) ? 1f : (Input.GetKey(KeyCode.Q) ? -1f : 0f);
+        // Roll
         continuousActionsOut[2] = Input.GetKey(KeyCode.D) ? 1f : (Input.GetKey(KeyCode.A) ? -1f : 0f);
+        // Throttle
         continuousActionsOut[3] = Input.GetKey(KeyCode.LeftShift) ? 1f : (Input.GetKey(KeyCode.LeftControl) ? -1f : 0f);
     }
 
@@ -334,19 +343,41 @@ public class PlaneAgent : Agent
     private void MoveTargetToRandomPosition()
     {
         if (target == null) return;
-        Vector3 randomPosition;
-        
-        do
-        {
-            randomPosition = Random.insideUnitSphere * targetSpawnRadius;
-            // Spawn relative to the agent's CURRENT position, not the initial one.
-            randomPosition += transform.position; 
-            
-            randomPosition.y = Mathf.Max(randomPosition.y, minSpawnHeight);
-        } 
-        while (Vector3.Distance(transform.position, randomPosition) < targetReachedRadius);
 
-        target.position = randomPosition;
+        // --- FIX START: Add a sanity check to prevent an infinite loop ---
+        // This validates that the spawn radius is larger than the target radius.
+        // If it's not, it's impossible to find a valid point, which causes the old code to freeze.
+        if (targetSpawnRadius <= targetReachedRadius)
+        {
+            Debug.LogError("`targetSpawnRadius` must be greater than `targetReachedRadius` to prevent an infinite loop. Check your agent's Inspector settings.");
+            // Place target at a default safe position to avoid freezing the editor.
+            target.position = transform.position + (Vector3.up * 100f) + (transform.forward * 100f);
+            return;
+        }
+        // --- FIX END ---
+
+        Vector3 randomPosition;
+        int maxAttempts = 100; // --- FIX: Add a maximum attempt counter ---
+
+        for (int i = 0; i < maxAttempts; i++)
+        {
+            // Get a random point within a sphere around the agent's CURRENT position.
+            randomPosition = transform.position + (Random.insideUnitSphere * targetSpawnRadius);
+            
+            // Ensure the target is not below the minimum spawn height.
+            randomPosition.y = Mathf.Max(randomPosition.y, minSpawnHeight);
+
+            // If the randomly chosen point is a safe distance away, we found our spot.
+            if (Vector3.Distance(transform.position, randomPosition) > targetReachedRadius)
+            {
+                target.position = randomPosition;
+                return;
+            }
+        }
+        
+        // --- FIX: If the loop finishes without finding a point (highly unlikely with correct settings) ---
+        Debug.LogWarning("Could not find a valid random position for the target after " + maxAttempts + " attempts. Placing it at a default location.");
+        target.position = transform.position + (transform.forward * (targetSpawnRadius * 0.5f)) + (Vector3.up * minSpawnHeight);
     }
 
     private void SelectGenesForEpisode()
@@ -387,5 +418,6 @@ public class PlaneAgent : Agent
 }
 
 
-
 // mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --force
+
+// mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --resume

@@ -1,6 +1,6 @@
 default_settings: null
 behaviors:
-  PlaneAgent:
+  Flyer:
     trainer_type: ppo
     hyperparameters:
       batch_size: 1024
@@ -79,8 +79,8 @@ checkpoint_settings:
   run_id: FirstConnectionTest
   initialize_from: null
   load_model: false
-  resume: false
-  force: true
+  resume: true
+  force: false
   train_model: false
   inference: false
   results_dir: results

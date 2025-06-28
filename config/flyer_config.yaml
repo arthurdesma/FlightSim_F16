@@ -1,5 +1,5 @@
 behaviors:
-  PlaneAgent:
+  Flyer:  # Changed from PlaneAgent to Flyer
     trainer_type: ppo
     hyperparameters:
       batch_size: 1024
