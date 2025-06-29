@@ -1,14 +1,15 @@
-// PlaneAgent.cs (Dynamic Spawning Version)
+// PlaneAgent.cs
 
 using UnityEngine;
 using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
-using System.Collections.Generic; // Still useful for LayerMasks, etc.
+using System.Collections.Generic;
 
 /// <summary>
-/// An ML-Agent that learns to fly towards a series of dynamically spawning random targets.
+/// An advanced ML-Agent that learns to fly an aircraft towards a series of dynamically spawning random targets.
 /// It must pass through each gate in a stable, forward orientation to get a reward and spawn the next one.
+/// It uses a "sonar" system for general terrain avoidance and is heavily rewarded for survival and safe flight.
 /// </summary>
 public class PlaneAgent : Agent
 {
@@ -31,18 +32,29 @@ public class PlaneAgent : Agent
     [SerializeField] private float maxSpawnHeight = 500f;
 
     private GameObject currentTargetInstance; // Holds the currently active, spawned gate
-    private int score; // Simple counter for how many gates were passed
+    private int score; // Simple counter for how many gates were passed in an episode
 
     [Header("Episode Settings")]
     [SerializeField] private float maxEpisodeSeconds = 300f;
 
-    [Header("Rewards & Penalties")]
-    [SerializeField] private float targetReachedReward = 20.0f; // Increased reward for the harder task
+    [Header("Primary Rewards & Penalties")]
+    [SerializeField] private float targetReachedReward = 20.0f;
     [SerializeField] private float crashPenalty = -30.0f;
     [SerializeField] private float timeStepPenalty = -0.001f;
     [SerializeField] private float timeOutPenalty = -10f;
     [SerializeField] private float progressRewardScale = 1.0f;
+
+    [Header("Survival Rewards")]
+    [Tooltip("How much to reward the agent for maintaining a stable, level flight.")]
     [SerializeField] private float stabilityScale = 0.2f;
+    [Tooltip("How much to reward the agent for staying within a safe altitude range.")]
+    [SerializeField] private float safeAltitudeReward = 0.01f;
+    [Tooltip("The minimum altitude to receive the safe altitude reward.")]
+    [SerializeField] private float safeAltitudeMin = 100f;
+    [Tooltip("The altitude below which the agent starts receiving strong penalties.")]
+    [SerializeField] private float penaltyAltitude = 75f;
+    [Tooltip("The strength of the penalty for flying too low. This should be a large negative number.")]
+    [SerializeField] private float groundProximityPenaltyScale = -25f;
 
     // State tracking variables
     private Vector3 initialPosition;
@@ -51,7 +63,6 @@ public class PlaneAgent : Agent
     private float lastDistanceToTarget;
     private float episodeTimer;
     private bool isEpisodeActive;
-
 
     public override void Initialize()
     {
@@ -67,7 +78,6 @@ public class PlaneAgent : Agent
         if (planeRigidbody == null) planeRigidbody = GetComponent<Rigidbody>();
         isReady = true;
 
-        // Safety check to ensure the prefab is assigned
         if (targetGatePrefab == null)
         {
             Debug.LogError("Target Gate Prefab has not been assigned in the Inspector!", this.gameObject);
@@ -82,7 +92,6 @@ public class PlaneAgent : Agent
 
         if (!isReady) InitializeAgent();
 
-        // Reset plane physics and position
         planeRigidbody.velocity = Vector3.zero;
         planeRigidbody.angularVelocity = Vector3.zero;
         transform.SetPositionAndRotation(initialPosition, initialRotation);
@@ -93,91 +102,52 @@ public class PlaneAgent : Agent
             planeRigidbody.velocity = transform.forward * 40f;
         }
 
-        // Spawn the very first target for this episode
         SpawnNewTargetGate();
     }
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        // Don't collect observations if the target doesn't exist yet
-        if (!isReady || !isEpisodeActive || plane == null || planeRigidbody == null || currentTargetInstance == null) return;
+        if (!isReady || !isEpisodeActive || plane == null || planeRigidbody == null || currentTargetInstance == null)
+        {
+            for (int i = 0; i < 22; i++) { sensor.AddObservation(0f); }
+            return;
+        }
 
         sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.velocity));
         sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.angularVelocity));
 
-        // Use the spawned gate's transform for observations
         Vector3 dirToTarget = (currentTargetInstance.transform.position - transform.position).normalized;
         sensor.AddObservation(transform.InverseTransformDirection(dirToTarget));
         sensor.AddObservation(Vector3.Distance(transform.position, currentTargetInstance.transform.position) / 1000f);
 
-        // Observe the orientation of the gate
         sensor.AddObservation(transform.InverseTransformDirection(currentTargetInstance.transform.forward));
         sensor.AddObservation(Vector3.Dot(transform.up, Vector3.up));
 
         CollectProximitySensorObservations(sensor);
     }
     
-    /// <summary>
-    /// The core of the new system. Destroys the old gate and spawns a new one
-    /// at a random, reachable position in front of the agent.
-    /// </summary>
-    private void SpawnNewTargetGate()
-    {
-        // Clean up the old gate if it exists
-        if (currentTargetInstance != null)
-        {
-            Destroy(currentTargetInstance);
-        }
-
-        // Calculate a spawn position
-        float forwardDistance = Random.Range(spawnDistanceMin, spawnDistanceMax);
-        Vector3 randomOffset = Random.insideUnitSphere * spawnRadius;
-        Vector3 spawnPosition = transform.position + (transform.forward * forwardDistance) + randomOffset;
-        
-        // Clamp the altitude to ensure it's not underground or too high
-        spawnPosition.y = Mathf.Clamp(spawnPosition.y, minSpawnHeight, maxSpawnHeight);
-
-        // Set the gate's rotation to face the plane, making it easier to pass through
-        Quaternion spawnRotation = Quaternion.LookRotation(transform.position - spawnPosition);
-
-        // Instantiate the new gate
-        currentTargetInstance = Instantiate(targetGatePrefab, spawnPosition, spawnRotation);
-
-        // Get the gate's script and tell it about this agent
-        TargetGate gateComponent = currentTargetInstance.GetComponent<TargetGate>();
-        if (gateComponent != null)
-        {
-            gateComponent.agent = this;
-        }
-
-        // Update the distance tracker
-        lastDistanceToTarget = Vector3.Distance(transform.position, currentTargetInstance.transform.position);
-    }
-    
-    /// <summary>
-    /// Public method called by the TargetGate script upon a successful pass-through.
-    /// </summary>
-    public void OnTargetReached()
-    {
-        if (!isEpisodeActive) return;
-
-        score++;
-        AddReward(targetReachedReward);
-
-        // Instead of picking the next gate from a list, we just spawn a new random one.
-        SpawnNewTargetGate();
-    }
-
-    // --- All other methods (OnActionReceived, FixedUpdate, CalculateRewards, etc.) remain largely the same, ---
-    // --- but must refer to `currentTargetInstance.transform` instead of `currentTarget.transform`.         ---
-
     private void CalculateRewards()
     {
         if (!isEpisodeActive || currentTargetInstance == null || plane == null || plane.Dead) return;
 
+        // 1. Survival Rewards (Teach agent to fly safely)
         float stability = Vector3.Dot(transform.up, Vector3.up);
         AddReward(stability * stabilityScale);
 
+        if (transform.position.y > safeAltitudeMin)
+        {
+            AddReward(safeAltitudeReward);
+        }
+
+        // 2. Survival Penalties (Teach agent to fear danger)
+        if (transform.position.y < penaltyAltitude)
+        {
+            float proximityRatio = 1f - (transform.position.y / penaltyAltitude);
+            float penalty = proximityRatio * proximityRatio * groundProximityPenaltyScale;
+            AddReward(penalty);
+        }
+
+        // 3. Objective Rewards (Teach agent to complete its mission)
         float currentDistance = Vector3.Distance(transform.position, currentTargetInstance.transform.position);
         float distanceDelta = lastDistanceToTarget - currentDistance;
         AddReward(distanceDelta * progressRewardScale);
@@ -185,13 +155,13 @@ public class PlaneAgent : Agent
 
         AddReward(timeStepPenalty);
 
-        if (plane.Dead || transform.position.y < 5f) {
+        // 4. Terminal State Check (End the episode on a crash)
+        if (plane.Dead || transform.position.y < 5f)
+        {
             AddReward(crashPenalty);
             TerminateEpisode();
         }
     }
-
-    #region --- Unchanged Methods ---
 
     public override void OnActionReceived(ActionBuffers actions)
     {
@@ -201,11 +171,39 @@ public class PlaneAgent : Agent
         CalculateRewards();
     }
 
+    private void SpawnNewTargetGate()
+    {
+        if (currentTargetInstance != null) Destroy(currentTargetInstance);
+        
+        float forwardDistance = Random.Range(spawnDistanceMin, spawnDistanceMax);
+        Vector3 randomOffset = Random.insideUnitSphere * spawnRadius;
+        Vector3 spawnPosition = transform.position + (transform.forward * forwardDistance) + randomOffset;
+        
+        spawnPosition.y = Mathf.Clamp(spawnPosition.y, minSpawnHeight, maxSpawnHeight);
+        
+        Quaternion spawnRotation = Quaternion.LookRotation(transform.position - spawnPosition);
+        currentTargetInstance = Instantiate(targetGatePrefab, spawnPosition, spawnRotation);
+        
+        TargetGate gateComponent = currentTargetInstance.GetComponent<TargetGate>();
+        if (gateComponent != null) gateComponent.agent = this;
+        
+        lastDistanceToTarget = Vector3.Distance(transform.position, currentTargetInstance.transform.position);
+    }
+    
+    public void OnTargetReached()
+    {
+        if (!isEpisodeActive) return;
+        score++;
+        AddReward(targetReachedReward);
+        SpawnNewTargetGate();
+    }
+
     private void FixedUpdate()
     {
         if (!isEpisodeActive) return;
         episodeTimer += Time.fixedDeltaTime;
-        if (episodeTimer >= maxEpisodeSeconds) {
+        if (episodeTimer >= maxEpisodeSeconds)
+        {
             AddReward(timeOutPenalty);
             TerminateEpisode();
         }
@@ -213,7 +211,8 @@ public class PlaneAgent : Agent
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (collision.gameObject.CompareTag("Terrain"))
+        // Use Layer check for best performance
+        if (collision.gameObject.layer == LayerMask.NameToLayer("Terrain"))
         {
             AddReward(crashPenalty);
             TerminateEpisode();
@@ -225,7 +224,6 @@ public class PlaneAgent : Agent
         if (isEpisodeActive)
         {
             isEpisodeActive = false;
-            // Clean up the final gate when the episode ends
             if (currentTargetInstance != null)
             {
                 Destroy(currentTargetInstance);
@@ -233,21 +231,25 @@ public class PlaneAgent : Agent
             EndEpisode();
         }
     }
-    
+
     private void CollectProximitySensorObservations(VectorSensor sensor)
     {
         Vector3[] rayDirections = {
             transform.forward, -transform.forward, transform.up, -transform.up,
             transform.right, -transform.right, (transform.forward - transform.up).normalized, (transform.forward + transform.up).normalized
         };
-        float sensorMaxDistance = 500f;
+        float sensorMaxDistance = 1000f;
         float sensorSphereRadius = 5f;
-        foreach (var dir in rayDirections) {
+        foreach (var dir in rayDirections)
+        {
             bool didHit = Physics.SphereCast(transform.position, sensorSphereRadius, dir, out RaycastHit hit, sensorMaxDistance, LayerMask.GetMask("Terrain"));
-            if (didHit) {
+            if (didHit)
+            {
                 sensor.AddObservation(hit.distance / sensorMaxDistance);
                 Debug.DrawRay(transform.position, dir * hit.distance, Color.yellow);
-            } else {
+            }
+            else
+            {
                 sensor.AddObservation(1.0f);
                 Debug.DrawRay(transform.position, dir * sensorMaxDistance, Color.cyan);
             }
@@ -262,10 +264,7 @@ public class PlaneAgent : Agent
         continuousActionsOut[2] = Input.GetKey(KeyCode.D) ? 1f : (Input.GetKey(KeyCode.A) ? -1f : 0f);
         continuousActionsOut[3] = Input.GetKey(KeyCode.LeftShift) ? 1f : (Input.GetKey(KeyCode.LeftControl) ? -1f : 0f);
     }
-
-    #endregion
 }
-
 
 
 // mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --force

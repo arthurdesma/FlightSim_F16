@@ -2,22 +2,22 @@
     "Flyer": {
         "checkpoints": [
             {
-                "steps": 21841,
-                "file_path": "results/FirstConnectionTest/Flyer/Flyer-21841.onnx",
-                "reward": 2907.879135131836,
-                "creation_time": 1751195246.339353,
+                "steps": 350936,
+                "file_path": "results/FirstConnectionTest/Flyer/Flyer-350936.onnx",
+                "reward": 2321.0989990234375,
+                "creation_time": 1751198168.887626,
                 "auxillary_file_paths": [
-                    "results/FirstConnectionTest/Flyer/Flyer-21841.pt"
+                    "results/FirstConnectionTest/Flyer/Flyer-350936.pt"
                 ]
             }
         ],
         "final_checkpoint": {
-            "steps": 21841,
+            "steps": 350936,
             "file_path": "results/FirstConnectionTest/Flyer.onnx",
-            "reward": 2907.879135131836,
-            "creation_time": 1751195246.339353,
+            "reward": 2321.0989990234375,
+            "creation_time": 1751198168.887626,
             "auxillary_file_paths": [
-                "results/FirstConnectionTest/Flyer/Flyer-21841.pt"
+                "results/FirstConnectionTest/Flyer/Flyer-350936.pt"
             ]
         }
     },
