@@ -1,47 +1,48 @@
+// PlaneAgent.cs (Dynamic Spawning Version)
+
 using UnityEngine;
 using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
-using System.Collections.Generic;
-using System.Linq;
+using System.Collections.Generic; // Still useful for LayerMasks, etc.
 
 /// <summary>
-/// An ML-Agent that learns to fly a plane towards targets while avoiding crashes.
-/// This version is integrated with the SphericalTagDetector for 360-degree obstacle awareness.
+/// An ML-Agent that learns to fly towards a series of dynamically spawning random targets.
+/// It must pass through each gate in a stable, forward orientation to get a reward and spawn the next one.
 /// </summary>
 public class PlaneAgent : Agent
 {
     [Header("Object References")]
     [SerializeField] private Plane plane;
     [SerializeField] private Rigidbody planeRigidbody;
-    [SerializeField] private Transform target;
-    [Tooltip("Drag the SphericalTagDetector component here.")]
-    [SerializeField] private SphericalTagDetector sphericalDetector; // Reference to your detector script
+
+    [Header("Dynamic Target Spawning")]
+    [Tooltip("The Target Gate prefab to be spawned randomly.")]
+    [SerializeField] private GameObject targetGatePrefab;
+    [Tooltip("The minimum distance in front of the plane to spawn a new target.")]
+    [SerializeField] private float spawnDistanceMin = 400f;
+    [Tooltip("The maximum distance in front of the plane to spawn a new target.")]
+    [SerializeField] private float spawnDistanceMax = 700f;
+    [Tooltip("The radius around the forward spawn point for randomization.")]
+    [SerializeField] private float spawnRadius = 300f;
+    [Tooltip("The minimum altitude for a new target spawn.")]
+    [SerializeField] private float minSpawnHeight = 150f;
+    [Tooltip("The maximum altitude for a new target spawn.")]
+    [SerializeField] private float maxSpawnHeight = 500f;
+
+    private GameObject currentTargetInstance; // Holds the currently active, spawned gate
+    private int score; // Simple counter for how many gates were passed
 
     [Header("Episode Settings")]
-    [SerializeField] private float targetSpawnRadius = 300f;
-    [SerializeField] private float minSpawnHeight = 100f; // Increased for safety
-    [SerializeField] private float targetReachedRadius = 40f;
-    [SerializeField] private float maxEpisodeSeconds = 120f; // Shorter episodes
+    [SerializeField] private float maxEpisodeSeconds = 300f;
 
-    [Header("Primary Rewards & Penalties")]
-    [SerializeField] private float targetReachedReward = 15.0f;
-    [SerializeField] private float crashPenalty = -30.0f; // Increased penalty
-    [SerializeField] private float timeStepPenalty = -0.001f; // Reduced
+    [Header("Rewards & Penalties")]
+    [SerializeField] private float targetReachedReward = 20.0f; // Increased reward for the harder task
+    [SerializeField] private float crashPenalty = -30.0f;
+    [SerializeField] private float timeStepPenalty = -0.001f;
     [SerializeField] private float timeOutPenalty = -10f;
-
-    [Header("Safety Rewards")]
     [SerializeField] private float progressRewardScale = 1.0f;
     [SerializeField] private float stabilityScale = 0.2f;
-    [SerializeField] private float altitudeRewardScale = 0.5f;
-    [SerializeField] private float groundProximityPenaltyScale = -15.0f; // Increased
-    [SerializeField] private float terrainProximityPenaltyScale = -20f; // Increased
-    [Tooltip("Penalty applied when the spherical detector 'sees' the terrain.")]
-    [SerializeField] private float sphericalRayPenalty = -5.0f; // Penalty for when the sphere detector hits something
-
-    [Header("Terrain Avoidance (Forward Check)")]
-    [SerializeField] private float terrainCheckDistance = 100f;
-    [SerializeField] private float terrainCheckSphereRadius = 10f;
 
     // State tracking variables
     private Vector3 initialPosition;
@@ -50,9 +51,7 @@ public class PlaneAgent : Agent
     private float lastDistanceToTarget;
     private float episodeTimer;
     private bool isEpisodeActive;
-    private float totalReward = 0f;
 
-    // --- INITIALIZATION & EPISODE MANAGEMENT ---
 
     public override void Initialize()
     {
@@ -66,256 +65,208 @@ public class PlaneAgent : Agent
         initialRotation = transform.rotation;
         if (plane == null) plane = GetComponent<Plane>();
         if (planeRigidbody == null) planeRigidbody = GetComponent<Rigidbody>();
-        
-        // Get the detector script automatically if it hasn't been assigned in the Inspector
-        if (sphericalDetector == null)
-        {
-            Debug.LogWarning("SphericalTagDetector not assigned in Inspector, attempting to find it on the GameObject.");
-            sphericalDetector = GetComponent<SphericalTagDetector>();
-        }
-        
         isReady = true;
+
+        // Safety check to ensure the prefab is assigned
+        if (targetGatePrefab == null)
+        {
+            Debug.LogError("Target Gate Prefab has not been assigned in the Inspector!", this.gameObject);
+        }
     }
 
     public override void OnEpisodeBegin()
     {
         isEpisodeActive = true;
-        totalReward = 0f;
         episodeTimer = 0f;
-        
+        score = 0;
+
         if (!isReady) InitializeAgent();
 
         // Reset plane physics and position
-        if (planeRigidbody != null)
-        {
-            planeRigidbody.velocity = Vector3.zero;
-            planeRigidbody.angularVelocity = Vector3.zero;
-        }
+        planeRigidbody.velocity = Vector3.zero;
+        planeRigidbody.angularVelocity = Vector3.zero;
         transform.SetPositionAndRotation(initialPosition, initialRotation);
 
         if (plane != null)
         {
             plane.ResetPlane();
-            planeRigidbody.velocity = transform.forward * 30f; // Gentler initial velocity for learning
+            planeRigidbody.velocity = transform.forward * 40f;
         }
 
-        MoveTargetToRandomPosition();
-        
-        // Initialize the distance tracker
-        if(target != null)
-        {
-            lastDistanceToTarget = Vector3.Distance(transform.position, target.position);
-        }
+        // Spawn the very first target for this episode
+        SpawnNewTargetGate();
     }
-
-    // --- OBSERVATIONS & ACTIONS ---
 
     public override void CollectObservations(VectorSensor sensor)
     {
-        if (!isReady || plane == null || planeRigidbody == null || target == null || sphericalDetector == null) return;
+        // Don't collect observations if the target doesn't exist yet
+        if (!isReady || !isEpisodeActive || plane == null || planeRigidbody == null || currentTargetInstance == null) return;
 
-        // Velocity and angular velocity in local space
-        sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.velocity)); // 3
-        sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.angularVelocity)); // 3
+        sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.velocity));
+        sensor.AddObservation(transform.InverseTransformDirection(planeRigidbody.angularVelocity));
 
-        // Direction and distance to target
-        Vector3 dirToTarget = (target.position - transform.position).normalized;
-        sensor.AddObservation(transform.InverseTransformDirection(dirToTarget)); // 3
-        float currentDistance = Vector3.Distance(transform.position, target.position);
-        sensor.AddObservation(currentDistance / 1000f); // Normalized distance // 1
+        // Use the spawned gate's transform for observations
+        Vector3 dirToTarget = (currentTargetInstance.transform.position - transform.position).normalized;
+        sensor.AddObservation(transform.InverseTransformDirection(dirToTarget));
+        sensor.AddObservation(Vector3.Distance(transform.position, currentTargetInstance.transform.position) / 1000f);
 
-        // Plane state
-        sensor.AddObservation(plane.Throttle); // 1
-        sensor.AddObservation(plane.AngleOfAttack); // 1
-        
-        // Stability (how upright the plane is)
-        sensor.AddObservation(Vector3.Dot(transform.up, Vector3.up)); // 1
+        // Observe the orientation of the gate
+        sensor.AddObservation(transform.InverseTransformDirection(currentTargetInstance.transform.forward));
+        sensor.AddObservation(Vector3.Dot(transform.up, Vector3.up));
 
-        // Ground proximity (critical for crash avoidance)
-        float groundDistance = transform.position.y;
-        sensor.AddObservation(groundDistance / 200f); // Normalized ground distance // 1
-
-        // Remaining time
-        float remainingTimeNormalized = Mathf.Max(0, 1f - (episodeTimer / maxEpisodeSeconds));
-        sensor.AddObservation(remainingTimeNormalized); // 1
-
-        // Information from our spherical detector
-        // Adds a 1 if the rays detect the ground, 0 otherwise. This is a crucial piece of info for the agent.
-        sensor.AddObservation(sphericalDetector.IsObstacleDetected ? 1.0f : 0.0f); // 1
-
-        // Total: 15 observations
+        CollectProximitySensorObservations(sensor);
     }
+    
+    /// <summary>
+    /// The core of the new system. Destroys the old gate and spawns a new one
+    /// at a random, reachable position in front of the agent.
+    /// </summary>
+    private void SpawnNewTargetGate()
+    {
+        // Clean up the old gate if it exists
+        if (currentTargetInstance != null)
+        {
+            Destroy(currentTargetInstance);
+        }
+
+        // Calculate a spawn position
+        float forwardDistance = Random.Range(spawnDistanceMin, spawnDistanceMax);
+        Vector3 randomOffset = Random.insideUnitSphere * spawnRadius;
+        Vector3 spawnPosition = transform.position + (transform.forward * forwardDistance) + randomOffset;
+        
+        // Clamp the altitude to ensure it's not underground or too high
+        spawnPosition.y = Mathf.Clamp(spawnPosition.y, minSpawnHeight, maxSpawnHeight);
+
+        // Set the gate's rotation to face the plane, making it easier to pass through
+        Quaternion spawnRotation = Quaternion.LookRotation(transform.position - spawnPosition);
+
+        // Instantiate the new gate
+        currentTargetInstance = Instantiate(targetGatePrefab, spawnPosition, spawnRotation);
+
+        // Get the gate's script and tell it about this agent
+        TargetGate gateComponent = currentTargetInstance.GetComponent<TargetGate>();
+        if (gateComponent != null)
+        {
+            gateComponent.agent = this;
+        }
+
+        // Update the distance tracker
+        lastDistanceToTarget = Vector3.Distance(transform.position, currentTargetInstance.transform.position);
+    }
+    
+    /// <summary>
+    /// Public method called by the TargetGate script upon a successful pass-through.
+    /// </summary>
+    public void OnTargetReached()
+    {
+        if (!isEpisodeActive) return;
+
+        score++;
+        AddReward(targetReachedReward);
+
+        // Instead of picking the next gate from a list, we just spawn a new random one.
+        SpawnNewTargetGate();
+    }
+
+    // --- All other methods (OnActionReceived, FixedUpdate, CalculateRewards, etc.) remain largely the same, ---
+    // --- but must refer to `currentTargetInstance.transform` instead of `currentTarget.transform`.         ---
+
+    private void CalculateRewards()
+    {
+        if (!isEpisodeActive || currentTargetInstance == null || plane == null || plane.Dead) return;
+
+        float stability = Vector3.Dot(transform.up, Vector3.up);
+        AddReward(stability * stabilityScale);
+
+        float currentDistance = Vector3.Distance(transform.position, currentTargetInstance.transform.position);
+        float distanceDelta = lastDistanceToTarget - currentDistance;
+        AddReward(distanceDelta * progressRewardScale);
+        lastDistanceToTarget = currentDistance;
+
+        AddReward(timeStepPenalty);
+
+        if (plane.Dead || transform.position.y < 5f) {
+            AddReward(crashPenalty);
+            TerminateEpisode();
+        }
+    }
+
+    #region --- Unchanged Methods ---
 
     public override void OnActionReceived(ActionBuffers actions)
     {
         if (plane == null || !isEpisodeActive) return;
-
-        float pitch = actions.ContinuousActions[0];
-        float yaw = actions.ContinuousActions[1];
-        float roll = actions.ContinuousActions[2];
-        float throttle = actions.ContinuousActions[3];
-
-        plane.SetControlInput(new Vector3(pitch, yaw, -roll));
-        plane.SetThrottleInput(throttle);
-
+        plane.SetControlInput(new Vector3(actions.ContinuousActions[0], actions.ContinuousActions[1], -actions.ContinuousActions[2]));
+        plane.SetThrottleInput(actions.ContinuousActions[3]);
         CalculateRewards();
     }
-    
+
     private void FixedUpdate()
     {
         if (!isEpisodeActive) return;
-        
         episodeTimer += Time.fixedDeltaTime;
-        if (episodeTimer >= maxEpisodeSeconds)
-        {
+        if (episodeTimer >= maxEpisodeSeconds) {
             AddReward(timeOutPenalty);
             TerminateEpisode();
         }
     }
 
-    // --- REWARD CALCULATION ---
-
-    private void CalculateRewards()
+    private void OnCollisionEnter(Collision collision)
     {
-        if (!isEpisodeActive || target == null || plane == null || plane.Dead || sphericalDetector == null) return;
-
-        // === CRITICAL: CRASH AVOIDANCE REWARDS ===
-        
-        // 1. Penalty from the spherical detector
-        if (sphericalDetector.IsObstacleDetected)
-        {
-            AddReward(sphericalRayPenalty);
-        }
-
-        // 2. Ground proximity penalty (early warning system)
-        float groundHeight = transform.position.y;
-        if (groundHeight < 50f)
-        {
-            float proximityRatio = (50f - groundHeight) / 50f;
-            float penalty = -proximityRatio * proximityRatio * groundProximityPenaltyScale;
-            AddReward(penalty);
-        }
-
-        // 3. Forward terrain avoidance
-        CalculateTerrainAvoidancePenalty();
-
-        // 4. Stability reward (prevent spinning out of control)
-        float stability = Vector3.Dot(transform.up, Vector3.up);
-        AddReward(stability * stabilityScale);
-
-        // 5. Altitude maintenance reward
-        if (groundHeight > 75f && groundHeight < 300f) // Sweet spot altitude
-        {
-            AddReward(altitudeRewardScale);
-        }
-
-        // === PROGRESS TOWARDS GOAL ===
-        
-        // 6. Progress reward
-        float currentDistance = Vector3.Distance(transform.position, target.position);
-        float distanceDelta = lastDistanceToTarget - currentDistance;
-        if (distanceDelta > 0)
-        {
-            AddReward(distanceDelta * progressRewardScale);
-        }
-        lastDistanceToTarget = currentDistance;
-
-        // 7. Small time penalty to encourage efficiency
-        AddReward(timeStepPenalty);
-
-        // === TARGET REACHED ===
-        if (currentDistance < targetReachedRadius)
-        {
-            AddReward(targetReachedReward);
-            MoveTargetToRandomPosition();
-            lastDistanceToTarget = Vector3.Distance(transform.position, target.position);
-        }
-        
-        totalReward = GetCumulativeReward();
-
-        // === EPISODE END CONDITIONS ===
-        if (plane.Dead || transform.position.y < 5f) // Crash conditions
+        if (collision.gameObject.CompareTag("Terrain"))
         {
             AddReward(crashPenalty);
             TerminateEpisode();
         }
     }
-    
-    private void CalculateTerrainAvoidancePenalty()
-    {
-        Vector3 checkDirection = planeRigidbody.velocity.magnitude > 5f ? 
-            planeRigidbody.velocity.normalized : transform.forward;
-            
-        if (Physics.SphereCast(transform.position, terrainCheckSphereRadius, 
-            checkDirection, out RaycastHit hit, terrainCheckDistance))
-        {
-            if (hit.collider.CompareTag("Terrain"))
-            {
-                float proximityRatio = 1f - (hit.distance / terrainCheckDistance);
-                float penalty = proximityRatio * proximityRatio * terrainProximityPenaltyScale;
-                AddReward(penalty);
-            }
-        }
-    }
-    
-    private void OnCollisionEnter(Collision collision)
-    {
-        if (target != null && collision.gameObject.transform == target) return;
-        
-        AddReward(crashPenalty);
-        TerminateEpisode();
-    }
-    
+
     private void TerminateEpisode()
     {
         if (isEpisodeActive)
         {
             isEpisodeActive = false;
+            // Clean up the final gate when the episode ends
+            if (currentTargetInstance != null)
+            {
+                Destroy(currentTargetInstance);
+            }
             EndEpisode();
+        }
+    }
+    
+    private void CollectProximitySensorObservations(VectorSensor sensor)
+    {
+        Vector3[] rayDirections = {
+            transform.forward, -transform.forward, transform.up, -transform.up,
+            transform.right, -transform.right, (transform.forward - transform.up).normalized, (transform.forward + transform.up).normalized
+        };
+        float sensorMaxDistance = 500f;
+        float sensorSphereRadius = 5f;
+        foreach (var dir in rayDirections) {
+            bool didHit = Physics.SphereCast(transform.position, sensorSphereRadius, dir, out RaycastHit hit, sensorMaxDistance, LayerMask.GetMask("Terrain"));
+            if (didHit) {
+                sensor.AddObservation(hit.distance / sensorMaxDistance);
+                Debug.DrawRay(transform.position, dir * hit.distance, Color.yellow);
+            } else {
+                sensor.AddObservation(1.0f);
+                Debug.DrawRay(transform.position, dir * sensorMaxDistance, Color.cyan);
+            }
         }
     }
     
     public override void Heuristic(in ActionBuffers actionsOut)
     {
         var continuousActionsOut = actionsOut.ContinuousActions;
-        
         continuousActionsOut[0] = Input.GetKey(KeyCode.S) ? 1f : (Input.GetKey(KeyCode.W) ? -1f : 0f);
         continuousActionsOut[1] = Input.GetKey(KeyCode.E) ? 1f : (Input.GetKey(KeyCode.Q) ? -1f : 0f);
         continuousActionsOut[2] = Input.GetKey(KeyCode.D) ? 1f : (Input.GetKey(KeyCode.A) ? -1f : 0f);
         continuousActionsOut[3] = Input.GetKey(KeyCode.LeftShift) ? 1f : (Input.GetKey(KeyCode.LeftControl) ? -1f : 0f);
     }
 
-    private void MoveTargetToRandomPosition()
-    {
-        if (target == null) return;
-
-        if (targetSpawnRadius <= targetReachedRadius)
-        {
-            Debug.LogError("targetSpawnRadius must be greater than targetReachedRadius");
-            target.position = transform.position + (Vector3.up * 100f) + (transform.forward * 100f);
-            return;
-        }
-
-        Vector3 randomPosition;
-        int maxAttempts = 50;
-
-        for (int i = 0; i < maxAttempts; i++)
-        {
-            randomPosition = transform.position + (Random.insideUnitSphere * targetSpawnRadius);
-            randomPosition.y = Mathf.Max(randomPosition.y, minSpawnHeight);
-            randomPosition.y = Mathf.Min(randomPosition.y, 400f);
-
-            if (Vector3.Distance(transform.position, randomPosition) > targetReachedRadius)
-            {
-                target.position = randomPosition;
-                return;
-            }
-        }
-        
-        Debug.LogWarning("Could not find valid target position, using fallback");
-        target.position = transform.position + (transform.forward * (targetSpawnRadius * 0.7f)) + (Vector3.up * minSpawnHeight);
-    }
+    #endregion
 }
+
+
 
 // mlagents-learn config/flyer_config.yaml --run-id=FirstConnectionTest --force
 
